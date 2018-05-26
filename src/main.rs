@@ -1,6 +1,9 @@
+#![feature(iterator_flatten)]
 extern crate clap;
 use clap::{App, Arg, ArgMatches};
-use std::{fs::File, io};
+use std::{
+    fs::File, io::{self, BufRead, BufReader},
+};
 
 #[derive(Debug)]
 struct Config {
@@ -108,5 +111,72 @@ fn main() {
         .get_matches();
 
     let config = Config::from_matches(&matches);
-    println!("{:?}", config);
+
+    let mut symbols_count: Vec<usize> = Vec::new();
+    let mut words_count: Vec<usize> = Vec::new();
+    let mut lines_count: Vec<usize> = Vec::new();
+
+    let mut total_symbols = 0;
+    let mut total_words = 0;
+    let mut total_lines = 0;
+
+    if config.stdin {
+        let stdin = io::stdin();
+
+        for line in stdin.lock().lines() {
+            if line.is_ok() {
+                let line = line.unwrap();
+                if config.lines {
+                    total_lines += 1;
+                }
+
+                if config.words {
+                    total_words += line.split_whitespace().count();
+                }
+
+                match config.symbols {
+                    Symbols::Characters => total_symbols += line.chars().count(),
+                    Symbols::Bytes => total_symbols += line.bytes().count(),
+                    Symbols::None => {}
+                }
+            }
+        }
+    } else {
+        for file in config.files.unwrap() {
+            let lines = BufReader::new(&file).lines().count();
+            let words = BufReader::new(&file)
+                .lines()
+                .filter(|x| x.is_ok())
+                .map(|x| x.unwrap())
+                .map(|x| {
+                    x.split_whitespace()
+                        .map(|y| y.to_owned())
+                        .collect::<Vec<_>>()
+                })
+                .flatten()
+                .count();
+            let pre_symbols = BufReader::new(&file)
+                .lines()
+                .filter(|x| x.is_ok())
+                .map(|x| x.unwrap());
+            let symbols = if config.symbols == Symbols::Bytes {
+                pre_symbols
+                    .map(|x| x.bytes().collect::<Vec<_>>())
+                    .flatten()
+                    .count()
+            } else {
+                pre_symbols
+                    .map(|x| x.chars().collect::<Vec<_>>())
+                    .flatten()
+                    .count()
+            };
+
+            symbols_count.push(symbols);
+            words_count.push(words);
+            lines_count.push(lines);
+        }
+        total_symbols = symbols_count.iter().sum();
+        total_lines = lines_count.iter().sum();
+        total_words = words_count.iter().sum();
+    }
 }
