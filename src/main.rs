@@ -5,6 +5,7 @@ use std::{
     fs::File, io::{self, BufRead, BufReader},
 };
 
+//TODO use structopt
 #[derive(Debug)]
 struct Config {
     symbols: Symbols,
@@ -21,6 +22,7 @@ enum Symbols {
     None,
 }
 
+//TODO Change into impl From<&ArgMatches> for Config
 impl Config {
     fn from_matches(matches: &ArgMatches) -> Config {
         let mut symbols = if matches.is_present("bytes") {
@@ -123,6 +125,12 @@ fn main() {
     if config.stdin {
         let stdin = io::stdin();
 
+        //Need to think at better solution than that
+        //The given file (AND stdin input) can't be guaranteed to be valid UTF-8
+        //e.g. it can be binary (real wc tool consumes such files)
+        //so should probably check BYTES vs. SYMBOLS first
+        //also notify of errors
+        //+ lines should seemingly be counted regardless of validity
         for line in stdin.lock().lines() {
             if line.is_ok() {
                 let line = line.unwrap();
@@ -134,6 +142,8 @@ fn main() {
                     total_words += line.split_whitespace().count();
                 }
 
+                //TODO make outside the loop
+                //Refactor into different functions
                 match config.symbols {
                     Symbols::Characters => total_symbols += line.chars().count(),
                     Symbols::Bytes => total_symbols += line.bytes().count(),
@@ -143,40 +153,66 @@ fn main() {
         }
     } else {
         for file in config.files.unwrap() {
-            let lines = BufReader::new(&file).lines().count();
-            let words = BufReader::new(&file)
-                .lines()
-                .filter(|x| x.is_ok())
-                .map(|x| x.unwrap())
-                .map(|x| {
-                    x.split_whitespace()
-                        .map(|y| y.to_owned())
-                        .collect::<Vec<_>>()
-                })
-                .flatten()
-                .count();
-            let pre_symbols = BufReader::new(&file)
-                .lines()
-                .filter(|x| x.is_ok())
-                .map(|x| x.unwrap());
-            let symbols = if config.symbols == Symbols::Bytes {
-                pre_symbols
-                    .map(|x| x.bytes().collect::<Vec<_>>())
-                    .flatten()
-                    .count()
-            } else {
-                pre_symbols
-                    .map(|x| x.chars().collect::<Vec<_>>())
-                    .flatten()
-                    .count()
-            };
+            //Hmm... Should I do one big loop instead of the iterator way?
+            if config.lines {
+                let lines = BufReader::new(&file).lines().count();
+                lines_count.push(lines);
+            }
 
-            symbols_count.push(symbols);
-            words_count.push(words);
-            lines_count.push(lines);
+            if config.words {
+                //Here, .collect() is basically a borrow-checker workaround.
+                //Find other one?
+                let words = BufReader::new(&file)
+                    .lines()
+                    .filter(|x| x.is_ok())
+                    .map(|x| x.unwrap())
+                    .map(|x| {
+                        x.split_whitespace()
+                            .map(|y| y.to_owned())
+                            .collect::<Vec<_>>()
+                    })
+                    .flatten()
+                    .count();
+
+                words_count.push(words);
+            }
+
+            if config.symbols != Symbols::None {
+                let pre_symbols = BufReader::new(&file)
+                    .lines()
+                    .filter(|x| x.is_ok())
+                    .map(|x| x.unwrap());
+                let symbols = if config.symbols == Symbols::Bytes {
+                    pre_symbols
+                        .map(|x| x.bytes().collect::<Vec<_>>())
+                        .flatten()
+                        .count()
+                } else {
+                    pre_symbols
+                        .map(|x| x.chars().collect::<Vec<_>>())
+                        .flatten()
+                        .count()
+                };
+
+                symbols_count.push(symbols);
+            }
         }
-        total_symbols = symbols_count.iter().sum();
-        total_lines = lines_count.iter().sum();
-        total_words = words_count.iter().sum();
+
+        if config.symbols != Symbols::None {
+            total_symbols = symbols_count.iter().sum();
+        }
+
+        if config.lines {
+            total_lines = lines_count.iter().sum();
+        }
+
+        if config.words {
+            total_words = words_count.iter().sum();
+        }
     }
+
+    //TODO printout
 }
+
+//TODO tests
+//TODO bench
