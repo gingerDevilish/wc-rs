@@ -1,6 +1,10 @@
 #![feature(iterator_flatten)]
 extern crate clap;
+#[macro_use]
+extern crate itertools;
+
 use clap::{App, Arg, ArgMatches};
+use itertools::join;
 use std::{
     fs::File, io::{self, BufRead, BufReader},
 };
@@ -13,6 +17,7 @@ struct Config {
     lines: bool,
     stdin: bool,
     files: Option<Vec<File>>,
+    filenames: Option<Vec<String>>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -34,28 +39,36 @@ impl Config {
         };
         let mut words = matches.is_present("words");
         let mut lines = matches.is_present("lines");
-        let (stdin, files): (bool, Option<Vec<File>>) = if matches.is_present("input") {
-            (
-                false,
-                Some(
-                    matches
-                        .values_of("input")
-                        .unwrap()
-                        .map(|x| File::open(x))
-                        .map(|y| {
-                            y.or_else(|x| {
-                                eprintln!("{:?}", x);
-                                Err(x)
+        let (stdin, files, filenames): (bool, Option<Vec<File>>, Option<Vec<String>>) =
+            if matches.is_present("input") {
+                (
+                    false,
+                    Some(
+                        matches
+                            .values_of("input")
+                            .unwrap()
+                            .map(|x| File::open(x))
+                            .map(|y| {
+                                y.or_else(|x| {
+                                    eprintln!("{:?}", x);
+                                    Err(x)
+                                })
                             })
-                        })
-                        .filter(|x| x.is_ok())
-                        .map(|x| x.unwrap())
-                        .collect(),
-                ),
-            )
-        } else {
-            (true, None)
-        };
+                            .filter(|x| x.is_ok())
+                            .map(|x| x.unwrap())
+                            .collect(),
+                    ),
+                    Some(
+                        matches
+                            .values_of("input")
+                            .unwrap()
+                            .map(|x| x.to_owned())
+                            .collect(),
+                    ),
+                )
+            } else {
+                (true, None, None)
+            };
 
         if !words && !lines && symbols == Symbols::None {
             symbols = Symbols::Bytes;
@@ -69,10 +82,12 @@ impl Config {
             lines,
             stdin,
             files,
+            filenames,
         }
     }
 }
 
+//TODO: split into functions, big main() is awful >__<
 fn main() {
     let matches = App::new("wc")
         .version("0.1.0")
@@ -161,7 +176,7 @@ fn main() {
 
             if config.words {
                 //Here, .collect() is basically a borrow-checker workaround.
-                //Find other one?
+                //Find another one maybe?
                 let words = BufReader::new(&file)
                     .lines()
                     .filter(|x| x.is_ok())
@@ -211,7 +226,116 @@ fn main() {
         }
     }
 
-    //TODO printout
+    let mut output = String::new();
+    let mut filenames = if config.stdin {
+        vec!["stdin".to_owned()]
+    } else {
+        config.filenames.unwrap()
+    };
+
+    if filenames.len() > 1 {
+        filenames.push("Total:".to_owned());
+    }
+
+    lines_count.push(total_lines);
+    words_count.push(total_words);
+    symbols_count.push(total_symbols);
+
+    let result: String;
+
+    //TODO refactor into separate function
+    //is there a better (more elegant) way to arrange that?
+    //conditional magic with iterators does not work because of strict typing
+    //TODO move identical println!() macros into outer layer?
+    //FIXME I seem to get the macro structure wrong -- all the counts except the first one give 0
+    match (config.lines, config.words, config.symbols) {
+        (true, true, Symbols::Characters) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, words_count, lines_count).map(|(f, s, w, l)| {
+                    format!("{}\t\t{} characters\t{} words\t{} lines", f, s, w, l)
+                }),
+                "\n"
+            )
+        ),
+        (true, true, Symbols::Bytes) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, words_count, lines_count)
+                    .map(|(f, s, w, l)| format!("{}\t\t{} bytes\t{} words\t{} lines", f, s, w, l)),
+                "\n"
+            )
+        ),
+        (true, true, Symbols::None) => println!(
+            "{}",
+            join(
+                izip!(filenames, words_count, lines_count)
+                    .map(|(f, w, l)| format!("{}\t\t{} words\t{} lines", f, w, l)),
+                "\n"
+            )
+        ),
+        (true, false, Symbols::Characters) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, lines_count)
+                    .map(|(f, s, l)| format!("{}\t\t{} characters\t{} lines", f, s, l)),
+                "\n"
+            )
+        ),
+        (true, false, Symbols::Bytes) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, lines_count)
+                    .map(|(f, s, l)| format!("{}\t\t{} bytes\t{} lines", f, s, l)),
+                "\n"
+            )
+        ),
+        (true, false, Symbols::None) => println!(
+            "{}",
+            join(
+                izip!(filenames, lines_count).map(|(f, l)| format!("{}\t\t{} lines", f, l)),
+                "\n"
+            )
+        ),
+        (false, true, Symbols::Characters) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, words_count)
+                    .map(|(f, s, w)| format!("{}\t\t{} characters\t{} words", f, s, w)),
+                "\n"
+            )
+        ),
+        (false, true, Symbols::Bytes) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count, words_count)
+                    .map(|(f, s, w)| format!("{}\t\t{} bytes\t{} words", f, s, w)),
+                "\n"
+            )
+        ),
+        (false, true, Symbols::None) => println!(
+            "{}",
+            join(
+                izip!(filenames, words_count).map(|(f, w)| format!("{}\t\t{} words", f, w)),
+                "\n"
+            )
+        ),
+        (false, false, Symbols::Characters) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count).map(|(f, s)| format!("{}\t\t{} characters", f, s)),
+                "\n"
+            )
+        ),
+        (false, false, Symbols::Bytes) => println!(
+            "{}",
+            join(
+                izip!(filenames, symbols_count).map(|(f, s)| format!("{}\t\t{} bytes", f, s)),
+                "\n"
+            )
+        ),
+        (false, false, Symbols::None) => {}
+    }
 }
 
 //TODO tests

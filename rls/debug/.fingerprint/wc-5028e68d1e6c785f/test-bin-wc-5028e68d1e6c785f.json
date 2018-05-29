@@ -1,0 +1,1 @@
+{"rustc":4128751961156135553,"features":"[]","target":2882782554534151788,"profile":15351318969164810688,"path":1036222786711178230,"deps":[["clap v2.31.2","clap",14863406556417335849]],"local":[{"MtimeBased":[[1527614950,585115746],".fingerprint/wc-5028e68d1e6c785f/dep-test-bin-wc-5028e68d1e6c785f"]}],"rustflags":[],"edition":"Edition2015"}

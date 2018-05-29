@@ -1,7 +1,7 @@
 [package]
+authors = ["Alena Yuryeva <nimfetrisa@gmail.com>"]
 name = "wc"
 version = "0.1.0"
-authors = ["Alena Yuryeva <nimfetrisa@gmail.com>"]
-
 [dependencies]
 clap = "2.31.2"
+itertools = "0.7.8"
