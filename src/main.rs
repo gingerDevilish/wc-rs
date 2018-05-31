@@ -1,13 +1,14 @@
 #![feature(iterator_flatten)]
 extern crate clap;
-#[macro_use]
 extern crate itertools;
 
 use clap::{App, Arg, ArgMatches};
 use itertools::join;
 use std::{
-    fs::File, io::{self, BufRead, BufReader},
+    fs::File, io::{self, BufRead, BufReader}, ops::AddAssign,
 };
+
+//TODO split into lib.rs & main.rs
 
 //TODO use structopt
 #[derive(Debug)]
@@ -20,11 +21,26 @@ struct Config {
     filenames: Option<Vec<String>>,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum Symbols {
     Bytes,
     Characters,
     None,
+}
+
+#[derive(Default, Copy, Clone)]
+struct Count {
+    symbols: usize,
+    words: usize,
+    lines: usize,
+}
+
+impl AddAssign for Count {
+    fn add_assign(&mut self, other: Count) {
+        self.symbols += other.symbols;
+        self.words += other.words;
+        self.lines += other.lines;
+    }
 }
 
 //TODO Change into impl From<&ArgMatches> for Config
@@ -87,9 +103,8 @@ impl Config {
     }
 }
 
-//TODO: split into functions, big main() is awful >__<
-fn main() {
-    let matches = App::new("wc")
+fn get_matches() -> ArgMatches<'static> {
+    App::new("wc")
         .version("0.1.0")
         .author("Elaine Y <nimfetrisa@gmail.com>")
         .about("Word, line, character, and byte count")
@@ -125,211 +140,127 @@ fn main() {
             .required(false)
             .help("If no files are specified, the standard input is used and no file name is displayed.  \
             The prompt will accept input until receiving EOF, or [^D] in most environments."))
-        .get_matches();
+        .get_matches()
+}
 
-    let config = Config::from_matches(&matches);
-
-    let mut symbols_count: Vec<usize> = Vec::new();
-    let mut words_count: Vec<usize> = Vec::new();
-    let mut lines_count: Vec<usize> = Vec::new();
-
-    let mut total_symbols = 0;
-    let mut total_words = 0;
-    let mut total_lines = 0;
-
-    if config.stdin {
-        let stdin = io::stdin();
-
-        //Need to think at better solution than that
-        //The given file (AND stdin input) can't be guaranteed to be valid UTF-8
-        //e.g. it can be binary (real wc tool consumes such files)
-        //so should probably check BYTES vs. SYMBOLS first
-        //also notify of errors
-        //+ lines should seemingly be counted regardless of validity
-        for line in stdin.lock().lines() {
-            if line.is_ok() {
-                let line = line.unwrap();
-                if config.lines {
-                    total_lines += 1;
-                }
-
-                //TODO make outside the loop
-                //Refactor into different functions
-                match config.symbols {
-                    Symbols::Characters => total_symbols += line.chars().count(),
-                    Symbols::Bytes => total_symbols += line.bytes().count(),
-                    Symbols::None => {}
-                }
-
-                if config.words {
-                    total_words += line.split_whitespace().count();
-                }
-
-            }
-        }
-    } else {
-        for file in config.files.unwrap() {
-            //Hmm... Should I do one big loop instead of the iterator way?
-            let mut buf = String::new();
-            let mut reader = BufReader::new(file);
-            let (mut lines, mut words, mut symbols): (usize, usize, usize) = (0, 0, 0);
-
-            while let Ok(_) = reader
-                .read_line(&mut buf)
-                .map_err(|x| ())
-                .and_then(|x| if x>0 { Ok(x)} else {Err(())}) {
-                if config.lines {
-                    lines += 1;
-                }
-
-                match config.symbols {
-                    Symbols::Characters => symbols += buf.chars().count(),
-                    Symbols::Bytes => symbols += buf.bytes().count(),
-                    Symbols::None => {}
-                }
-
-                if  config.words {
-                    words += buf.split_whitespace().count();
-                }
-
-            }
-
-            if config.lines {
-                lines_count.push(lines);
-            }
-
-            if config.words {
-                words_count.push(words);
-            }
-
-            if config.symbols != Symbols::None {
-                symbols_count.push(symbols);
-            }
-        }
-
-        if config.symbols != Symbols::None {
-            total_symbols = symbols_count.iter().sum();
-        }
-
+//TODO maybe make Config global?
+//Need to think at better solution than that
+//The given file (AND stdin input) can't be guaranteed to be valid UTF-8
+//e.g. it can be binary (real wc tool consumes such files)
+//so should probably check BYTES vs. SYMBOLS first
+//also notify of errors
+//+ lines should seemingly be counted regardless of validity
+fn process_file(mut reader: impl BufRead, config: &Config) -> Count {
+    let mut buf = String::new();
+    let mut count = Count::default();
+    while let Ok(_) =
+        reader
+            .read_line(&mut buf)
+            .map_err(|_| ())
+            .and_then(|x| if x > 0 { Ok(x) } else { Err(()) })
+    {
         if config.lines {
-            total_lines = lines_count.iter().sum();
+            count.lines += 1;
+        }
+
+        match config.symbols {
+            Symbols::Characters => count.symbols += buf.chars().count(),
+            Symbols::Bytes => count.symbols += buf.bytes().count(),
+            Symbols::None => {}
         }
 
         if config.words {
-            total_words = words_count.iter().sum();
+            count.words += buf.split_whitespace().count();
+        }
+        buf.clear();
+    }
+    count
+}
+
+//TODO find a way to format as a table
+fn construct_response(config: &Config, filenames: Vec<String>, counts: Vec<Count>) -> String {
+    let lambda = |(f, counts): (&String, Count)| match (config.lines, config.words, config.symbols)
+    {
+        (true, true, Symbols::Characters) => format!(
+            "{}\t\t{} characters\t\t{} words\t{} lines",
+            f, counts.symbols, counts.words, counts.lines
+        ),
+
+        (true, true, Symbols::Bytes) => format!(
+            "{}\t\t{} bytes\t\t{} words\t{} lines",
+            f, counts.symbols, counts.words, counts.lines
+        ),
+
+        (true, true, Symbols::None) => {
+            format!("{}\t\t{} words\t{} lines", f, counts.words, counts.lines)
+        }
+
+        (true, false, Symbols::Characters) => format!(
+            "{}\t\t{} characters\t\t{} lines",
+            f, counts.symbols, counts.lines
+        ),
+
+        (true, false, Symbols::Bytes) => format!(
+            "{}\t\t{} bytes\t\t{} lines",
+            f, counts.symbols, counts.lines
+        ),
+
+        (true, false, Symbols::None) => format!("{}\t\t{} lines", f, counts.lines),
+
+        (false, true, Symbols::Characters) => format!(
+            "{}\t\t{} characters\t\t{} words",
+            f, counts.symbols, counts.words
+        ),
+
+        (false, true, Symbols::Bytes) => {
+            format!("{}\t\t{} bytes\t{} words", f, counts.symbols, counts.words)
+        }
+
+        (false, true, Symbols::None) => format!("{}\t\t{} words", f, counts.words),
+
+        (false, false, Symbols::Characters) => format!("{}\t\t{} characters", f, counts.symbols),
+
+        (false, false, Symbols::Bytes) => format!("{}\t\t{} bytes", f, counts.symbols),
+
+        (false, false, Symbols::None) => String::new(),
+    };
+
+    join(filenames.iter().zip(counts).map(|x| lambda(x)), "\n")
+}
+
+fn main() {
+    let matches = get_matches();
+
+    let mut config = Config::from_matches(&matches);
+
+    let mut counts: Vec<Count> = Vec::new();
+    let mut totals = Count::default();
+
+    if config.stdin {
+        let stdin = io::stdin();
+        totals = process_file(stdin.lock(), &config);
+    } else {
+        for file in config.files.take().unwrap() {
+            let count = process_file(BufReader::new(file), &config);
+
+            totals += count;
+            counts.push(count);
         }
     }
 
-    let mut output = String::new();
     let mut filenames = if config.stdin {
         vec!["stdin".to_owned()]
     } else {
-        config.filenames.unwrap()
+        config.filenames.take().unwrap()
     };
 
     if filenames.len() > 1 {
         filenames.push("Total:".to_owned());
     }
 
-    lines_count.push(total_lines);
-    words_count.push(total_words);
-    symbols_count.push(total_symbols);
+    counts.push(totals);
 
-    let result: String;
-
-    //TODO refactor into separate function
-    //is there a better (more elegant) way to arrange that?
-    //conditional magic with iterators does not work because of strict typing
-    //TODO move identical println!() macros into outer layer?
-    //TODO find a way to format as a table
-    match (config.lines, config.words, config.symbols) {
-        (true, true, Symbols::Characters) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, words_count, lines_count).map(|(f, s, w, l)| {
-                    format!("{}\t\t{} characters\t\t{} words\t{} lines", f, s, w, l)
-                }),
-                "\n"
-            )
-        ),
-        (true, true, Symbols::Bytes) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, words_count, lines_count)
-                    .map(|(f, s, w, l)| format!("{}\t\t{} bytes\t\t{} words\t{} lines", f, s, w, l)),
-                "\n"
-            )
-        ),
-        (true, true, Symbols::None) => println!(
-            "{}",
-            join(
-                izip!(filenames, words_count, lines_count)
-                    .map(|(f, w, l)| format!("{}\t\t{} words\t{} lines", f, w, l)),
-                "\n"
-            )
-        ),
-        (true, false, Symbols::Characters) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, lines_count)
-                    .map(|(f, s, l)| format!("{}\t\t{} characters\t\t{} lines", f, s, l)),
-                "\n"
-            )
-        ),
-        (true, false, Symbols::Bytes) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, lines_count)
-                    .map(|(f, s, l)| format!("{}\t\t{} bytes\t\t{} lines", f, s, l)),
-                "\n"
-            )
-        ),
-        (true, false, Symbols::None) => println!(
-            "{}",
-            join(
-                izip!(filenames, lines_count).map(|(f, l)| format!("{}\t\t{} lines", f, l)),
-                "\n"
-            )
-        ),
-        (false, true, Symbols::Characters) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, words_count)
-                    .map(|(f, s, w)| format!("{}\t\t{} characters\t\t{} words", f, s, w)),
-                "\n"
-            )
-        ),
-        (false, true, Symbols::Bytes) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count, words_count)
-                    .map(|(f, s, w)| format!("{}\t\t{} bytes\t{} words", f, s, w)),
-                "\n"
-            )
-        ),
-        (false, true, Symbols::None) => println!(
-            "{}",
-            join(
-                izip!(filenames, words_count).map(|(f, w)| format!("{}\t\t{} words", f, w)),
-                "\n"
-            )
-        ),
-        (false, false, Symbols::Characters) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count).map(|(f, s)| format!("{}\t\t{} characters", f, s)),
-                "\n"
-            )
-        ),
-        (false, false, Symbols::Bytes) => println!(
-            "{}",
-            join(
-                izip!(filenames, symbols_count).map(|(f, s)| format!("{}\t\t{} bytes", f, s)),
-                "\n"
-            )
-        ),
-        (false, false, Symbols::None) => {}
-    }
+    println!("{}", construct_response(&config, filenames, counts));
 }
 
 //TODO tests
