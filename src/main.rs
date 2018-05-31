@@ -153,10 +153,6 @@ fn main() {
                     total_lines += 1;
                 }
 
-                if config.words {
-                    total_words += line.split_whitespace().count();
-                }
-
                 //TODO make outside the loop
                 //Refactor into different functions
                 match config.symbols {
@@ -164,51 +160,49 @@ fn main() {
                     Symbols::Bytes => total_symbols += line.bytes().count(),
                     Symbols::None => {}
                 }
+
+                if config.words {
+                    total_words += line.split_whitespace().count();
+                }
+
             }
         }
     } else {
         for file in config.files.unwrap() {
             //Hmm... Should I do one big loop instead of the iterator way?
+            let mut buf = String::new();
+            let mut reader = BufReader::new(file);
+            let (mut lines, mut words, mut symbols): (usize, usize, usize) = (0, 0, 0);
+
+            while let Ok(_) = reader
+                .read_line(&mut buf)
+                .map_err(|x| ())
+                .and_then(|x| if x>0 { Ok(x)} else {Err(())}) {
+                if config.lines {
+                    lines += 1;
+                }
+
+                match config.symbols {
+                    Symbols::Characters => symbols += buf.chars().count(),
+                    Symbols::Bytes => symbols += buf.bytes().count(),
+                    Symbols::None => {}
+                }
+
+                if  config.words {
+                    words += buf.split_whitespace().count();
+                }
+
+            }
+
             if config.lines {
-                let lines = BufReader::new(&file).lines().count();
                 lines_count.push(lines);
             }
 
             if config.words {
-                //Here, .collect() is basically a borrow-checker workaround.
-                //Find another one maybe?
-                let words = BufReader::new(&file)
-                    .lines()
-                    .filter(|x| x.is_ok())
-                    .map(|x| x.unwrap())
-                    .map(|x| {
-                        x.split_whitespace()
-                            .map(|y| y.to_owned())
-                            .collect::<Vec<_>>()
-                    })
-                    .flatten()
-                    .count();
-
                 words_count.push(words);
             }
 
             if config.symbols != Symbols::None {
-                let pre_symbols = BufReader::new(&file)
-                    .lines()
-                    .filter(|x| x.is_ok())
-                    .map(|x| x.unwrap());
-                let symbols = if config.symbols == Symbols::Bytes {
-                    pre_symbols
-                        .map(|x| x.bytes().collect::<Vec<_>>())
-                        .flatten()
-                        .count()
-                } else {
-                    pre_symbols
-                        .map(|x| x.chars().collect::<Vec<_>>())
-                        .flatten()
-                        .count()
-                };
-
                 symbols_count.push(symbols);
             }
         }
@@ -247,13 +241,13 @@ fn main() {
     //is there a better (more elegant) way to arrange that?
     //conditional magic with iterators does not work because of strict typing
     //TODO move identical println!() macros into outer layer?
-    //FIXME I seem to get the macro structure wrong -- all the counts except the first one give 0
+    //TODO find a way to format as a table
     match (config.lines, config.words, config.symbols) {
         (true, true, Symbols::Characters) => println!(
             "{}",
             join(
                 izip!(filenames, symbols_count, words_count, lines_count).map(|(f, s, w, l)| {
-                    format!("{}\t\t{} characters\t{} words\t{} lines", f, s, w, l)
+                    format!("{}\t\t{} characters\t\t{} words\t{} lines", f, s, w, l)
                 }),
                 "\n"
             )
@@ -262,7 +256,7 @@ fn main() {
             "{}",
             join(
                 izip!(filenames, symbols_count, words_count, lines_count)
-                    .map(|(f, s, w, l)| format!("{}\t\t{} bytes\t{} words\t{} lines", f, s, w, l)),
+                    .map(|(f, s, w, l)| format!("{}\t\t{} bytes\t\t{} words\t{} lines", f, s, w, l)),
                 "\n"
             )
         ),
@@ -278,7 +272,7 @@ fn main() {
             "{}",
             join(
                 izip!(filenames, symbols_count, lines_count)
-                    .map(|(f, s, l)| format!("{}\t\t{} characters\t{} lines", f, s, l)),
+                    .map(|(f, s, l)| format!("{}\t\t{} characters\t\t{} lines", f, s, l)),
                 "\n"
             )
         ),
@@ -286,7 +280,7 @@ fn main() {
             "{}",
             join(
                 izip!(filenames, symbols_count, lines_count)
-                    .map(|(f, s, l)| format!("{}\t\t{} bytes\t{} lines", f, s, l)),
+                    .map(|(f, s, l)| format!("{}\t\t{} bytes\t\t{} lines", f, s, l)),
                 "\n"
             )
         ),
@@ -301,7 +295,7 @@ fn main() {
             "{}",
             join(
                 izip!(filenames, symbols_count, words_count)
-                    .map(|(f, s, w)| format!("{}\t\t{} characters\t{} words", f, s, w)),
+                    .map(|(f, s, w)| format!("{}\t\t{} characters\t\t{} words", f, s, w)),
                 "\n"
             )
         ),
